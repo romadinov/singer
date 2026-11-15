@@ -58,6 +58,14 @@ struct StreamInfo: View {
             badge(t.map { $0.bitrateKbps > 0 ? "\($0.bitrateKbps)" : "---" } ?? "---", "kbps")
             badge(t.map { $0.sampleRate > 0 ? sampleRateText($0.sampleRate) : "--" } ?? "--", "kHz")
             if let t, t.bitsPerSample > 0, t.isLossless { badge("\(t.bitsPerSample)", "bit") }
+            if let t, model.outputSampleRate > 0, t.sampleRate > 0, model.isPlaying || model.isPaused,
+               abs(model.outputSampleRate - t.sampleRate) > 1 {
+                // The hardware runs at a different rate, so Core Audio resamples.
+                Text("→\(sampleRateText(model.outputSampleRate))")
+                    .font(.system(size: 8, weight: .heavy))
+                    .foregroundStyle(.orange)
+                    .help("Output device runs at \(sampleRateText(model.outputSampleRate)) kHz, so audio is resampled")
+            }
             Spacer(minLength: 2)
             if let t, !t.codec.isEmpty {
                 Text(t.codec).font(.system(size: 8, weight: .heavy)).foregroundStyle(Theme.label)

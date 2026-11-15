@@ -73,3 +73,48 @@ enum Snapshot {
         print("wrote \(out)")
     }
 }
+
+/// `Singer --probe-sound a b hires`: gapless handover a → b, then output-rate switching to `hires` and back.
+enum SoundProbe {
+    @MainActor
+    static func run(_ paths: [String]) {
+        guard paths.count >= 3 else { print("usage: --probe-sound a b hires"); return }
+        let urls = paths.map { URL(fileURLWithPath: $0) }
+        let engine = AudioEngine()
+        engine.volume = 0
+        engine.bassBoost = 9
+        engine.setClipGuard(enabled: true, headroom: 9)
+        engine.voiceBoost = 6
+        let start = Date()
+        var advancedAt: Double?, finishedAt: Double?
+        engine.onAdvanced = { advancedAt = Date().timeIntervalSince(start) }
+        engine.onFinished = { finishedAt = Date().timeIntervalSince(start) }
+        func wait(_ s: Double) { RunLoop.main.run(until: Date().addingTimeInterval(s)) }
+        do {
+            try engine.load(url: urls[0])
+            let d0 = engine.duration
+            engine.play()
+            print("gapless queued:", engine.queueNext(url: urls[1]))
+            var maxBefore = 0.0, minAfter = 99.0
+            while finishedAt == nil, Date().timeIntervalSince(start) < d0 * 2 + 5 {
+                wait(0.05)
+                let t = engine.currentTime
+                if advancedAt == nil { maxBefore = max(maxBefore, t) } else { minAfter = min(minAfter, t) }
+            }
+            print(String(format: "file A %.2fs; advanced at %.2fs (A reached %.2fs, B started at %.2fs); finished at %.2fs",
+                         d0, advancedAt ?? -1, maxBefore, minAfter, finishedAt ?? -1))
+
+            let dev = OutputDevice.defaultDevice!
+            print("device rate before:", OutputDevice.nominalRate(dev))
+            try engine.load(url: urls[2]); engine.play(); wait(1)
+            print(String(format: "hires file → device %.0f, engine output %.0f, t=%.2f", OutputDevice.nominalRate(dev), engine.outputSampleRate, engine.currentTime))
+            try engine.load(url: urls[0]); engine.play(); wait(1)
+            print(String(format: "44.1k file → device %.0f, engine output %.0f, t=%.2f", OutputDevice.nominalRate(dev), engine.outputSampleRate, engine.currentTime))
+            engine.stop()
+        } catch {
+            print("FAILED:", error)
+        }
+        OutputDevice.restoreOriginal()
+        if let dev = OutputDevice.defaultDevice { print("device rate restored:", OutputDevice.nominalRate(dev)) }
+    }
+}

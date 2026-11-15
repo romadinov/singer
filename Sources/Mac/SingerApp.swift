@@ -10,6 +10,10 @@ enum Main {
             Probe.run(Array(args[(i + 1)...]))
             return
         }
+        if let i = args.firstIndex(of: "--probe-sound") {
+            MainActor.assumeIsolated { SoundProbe.run(Array(args[(i + 1)...])) }
+            return
+        }
         if let i = args.firstIndex(of: "--snapshot") {
             MainActor.assumeIsolated { Snapshot.run(Array(args[(i + 1)...])) }
             return
@@ -147,6 +151,21 @@ struct PlayerCommands: Commands {
             Divider()
             Button("Shuffle") { model.shuffle.toggle() }.keyboardShortcut("s", modifiers: [])
             Button("Cycle Repeat (Off / All / One)") { model.cycleRepeat() }.keyboardShortcut("r", modifiers: [])
+        }
+        CommandMenu("Sound") {
+            Toggle("Gapless Playback", isOn: Binding(get: { model.gapless }, set: { model.gapless = $0 }))
+            Toggle("Match Output Sample Rate", isOn: Binding(get: { model.matchSampleRate }, set: { model.matchSampleRate = $0 }))
+            Toggle("Clip Guard (Headroom + Limiter)", isOn: Binding(get: { model.clipGuard }, set: { model.clipGuard = $0 }))
+            Divider()
+            Toggle("Bass Boost", isOn: Binding(get: { model.bassBoostOn }, set: { model.bassBoostOn = $0 }))
+                .keyboardShortcut("b", modifiers: [.command, .option])
+            Toggle("Voice Boost", isOn: Binding(get: { model.voiceBoostOn }, set: { model.voiceBoostOn = $0 }))
+                .keyboardShortcut("v", modifiers: [.command, .option])
+            Menu("Bass Boost Amount") {
+                ForEach([3.0, 6.0, 9.0, 12.0], id: \.self) { db in
+                    Button(String(format: "+%.0f dB", db)) { model.applyBassPreset(db) }
+                }
+            }
         }
         CommandGroup(before: .toolbar) {
             Button("Equalizer") { model.showEqualizer.toggle() }.keyboardShortcut("g", modifiers: .option)

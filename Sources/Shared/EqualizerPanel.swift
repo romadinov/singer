@@ -61,6 +61,9 @@ struct EqualizerPanel: View {
                 }
             }
             .opacity(model.eqEnabled ? 1 : 0.5)
+
+            SoundRow()
+            VoiceRow()
         }
         .padding(8)
         .panel()
@@ -104,6 +107,64 @@ struct EQCurve: View {
             }
             path.addLine(to: CGPoint(x: size.width, y: pts.last!.y))
             ctx.stroke(path, with: .color(enabled ? Theme.lcdText : Theme.lcdDim), lineWidth: 1.2)
+        }
+    }
+}
+
+/// Bass boost, clip guard and gapless switches under the equalizer.
+struct SoundRow: View {
+    @Environment(PlayerModel.self) private var model
+
+    var body: some View {
+        @Bindable var model = model
+        HStack(spacing: 6) {
+            RetroButton(text: "BASS", active: model.bassBoostOn, help: "Bass boost (low shelf at 100 Hz)") {
+                model.bassBoostOn.toggle()
+            }
+            RetroSlider(value: $model.bassBoost, range: 0...12, fill: .orange)
+                .frame(minWidth: 60)
+                .opacity(model.bassBoostOn ? 1 : 0.4)
+                .help(String(format: "Bass boost: +%.1f dB", model.bassBoost))
+            Text(String(format: "+%.0fdB", model.bassBoost))
+                .font(Theme.lcdFont(9, weight: .bold))
+                .foregroundStyle(model.bassBoostOn ? Theme.lcdText : Theme.lcdDim)
+                .frame(width: 36)
+                .padding(.vertical, 2)
+                .lcd()
+            Spacer(minLength: 4)
+            RetroButton(text: "SAFE", active: model.clipGuard,
+                        help: model.clipGuard
+                            ? String(format: "Clip guard on: %.1f dB headroom + peak limiter", model.headroom)
+                            : "Clip guard off: EQ and bass boosts can distort") {
+                model.clipGuard.toggle()
+            }
+            RetroButton(text: "GAPLESS", active: model.gapless, help: "Play the next track without a gap") {
+                model.gapless.toggle()
+            }
+        }
+    }
+}
+
+/// Voice boost: fuller, louder vocals and narration.
+struct VoiceRow: View {
+    @Environment(PlayerModel.self) private var model
+
+    var body: some View {
+        @Bindable var model = model
+        HStack(spacing: 6) {
+            RetroButton(text: "VOICE", active: model.voiceBoostOn,
+                        help: "Voice boost: fuller, louder vocals and narration") {
+                model.voiceBoostOn.toggle()
+            }
+            RetroSlider(value: $model.voiceBoost, range: 1...12, fill: .cyan)
+                .frame(minWidth: 60)
+                .opacity(model.voiceBoostOn ? 1 : 0.4)
+            Text(String(format: "+%.0fdB", model.voiceBoost))
+                .font(Theme.lcdFont(9, weight: .bold))
+                .foregroundStyle(model.voiceBoostOn ? Theme.lcdText : Theme.lcdDim)
+                .frame(width: 36)
+                .padding(.vertical, 2)
+                .lcd()
         }
     }
 }

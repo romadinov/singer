@@ -50,16 +50,34 @@ final class PlayerModel {
     var volume: Double = 0.8 { didSet { engine.volume = Float(volume); save("volume", volume); updateNowPlaying() } }
     var balance: Double = 0 { didSet { engine.balance = Float(balance); save("balance", balance) } }
     var rate: Double = 1 { didSet { engine.rate = Float(rate); save("rate", rate); updateNowPlaying() } }
-    var shuffle = false { didSet { save("shuffle", shuffle) } }
-    var repeatMode: RepeatMode = .all { didSet { save("repeat", repeatMode.rawValue) } }
-    var eqEnabled = true { didSet { engine.eqEnabled = eqEnabled; save("eqEnabled", eqEnabled) } }
+    var shuffle = false { didSet { save("shuffle", shuffle); if shuffle != oldValue { replanNext(force: true) } } }
+    var repeatMode: RepeatMode = .all { didSet { save("repeat", repeatMode.rawValue); replanNext() } }
+    var eqEnabled = true { didSet { engine.eqEnabled = eqEnabled; save("eqEnabled", eqEnabled); applyHeadroom() } }
     var preamp: Double = 0 { didSet { engine.preamp = Float(preamp); save("preamp", preamp) } }
     var eqGains = [Double](repeating: 0, count: 10) {
         didSet {
             for (i, g) in eqGains.enumerated() { engine.setGain(Float(g), band: i) }
             save("eqGains", eqGains)
+            applyHeadroom()
         }
     }
+
+    // Sound
+    /// Play the next track with no gap (when it has the same sample rate and channel count).
+    var gapless = true { didSet { save("gapless", gapless); gapless ? planNext() : dropPlannedNext() } }
+    /// Switch the output device to the file's sample rate so lossless isn't resampled.
+    var matchSampleRate = true { didSet { save("matchSampleRate", matchSampleRate); engine.matchOutputRate = matchSampleRate } }
+    /// Automatic headroom for EQ/bass boosts plus a peak limiter, so boosts never clip.
+    var clipGuard = true { didSet { save("clipGuard", clipGuard); applyHeadroom() } }
+    var bassBoostOn = false { didSet { save("bassBoostOn", bassBoostOn); applyBass() } }
+    /// Bass boost amount in dB (low shelf at 100 Hz).
+    var bassBoost: Double = 6 { didSet { save("bassBoost", bassBoost); applyBass() } }
+    /// Fuller, louder vocals and narration (presence EQ + gentle compression).
+    var voiceBoostOn = false { didSet { save("voiceBoostOn", voiceBoostOn); applyVoice() } }
+    var voiceBoost: Double = 5 { didSet { save("voiceBoost", voiceBoost); applyVoice() } }
+    private(set) var outputSampleRate: Double = 0
+    /// dB of attenuation the clip guard currently applies.
+    private(set) var headroom: Double = 0
     var showEqualizer = true { didSet { save("showEQ", showEqualizer) } }
     var showPlaylist = true { didSet { save("showPL", showPlaylist) } }
 
@@ -69,6 +87,9 @@ final class PlayerModel {
     @ObservationIgnored private var timer: Timer?
     @ObservationIgnored private var loadToken = 0
     @ObservationIgnored private var history: [Track.ID] = []
+    /// Track queued in the engine for gapless playback.
+    @ObservationIgnored private var plannedNextID: Track.ID?
+    @ObservationIgnored private var planToken = 0
     @ObservationIgnored private var saveWork: DispatchWorkItem?
     @ObservationIgnored private var lastResumeSave = Date.distantPast
     @ObservationIgnored private var resumePositions: [String: Double] =
@@ -94,6 +115,13 @@ final class PlayerModel {
         if let g = d.array(forKey: "eqGains") as? [Double], g.count == 10 { eqGains = g }
         if d.object(forKey: "showEQ") != nil { showEqualizer = d.bool(forKey: "showEQ") }
         if d.object(forKey: "showPL") != nil { showPlaylist = d.bool(forKey: "showPL") }
+        if d.object(forKey: "gapless") != nil { gapless = d.bool(forKey: "gapless") }
+        if d.object(forKey: "matchSampleRate") != nil { matchSampleRate = d.bool(forKey: "matchSampleRate") }
+        if d.object(forKey: "clipGuard") != nil { clipGuard = d.bool(forKey: "clipGuard") }
+        bassBoostOn = d.bool(forKey: "bassBoostOn")
+        if d.object(forKey: "bassBoost") != nil { bassBoost = d.double(forKey: "bassBoost") }
+        voiceBoostOn = d.bool(forKey: "voiceBoostOn")
+        if d.object(forKey: "voiceBoost") != nil { voiceBoost = d.double(forKey: "voiceBoost") }
 
         engine.volume = Float(volume)
         engine.balance = Float(balance)
@@ -101,8 +129,12 @@ final class PlayerModel {
         engine.eqEnabled = eqEnabled
         engine.preamp = Float(preamp)
         for (i, g) in eqGains.enumerated() { engine.setGain(Float(g), band: i) }
+        engine.matchOutputRate = matchSampleRate
+        applyBass()
+        applyVoice()
 
         engine.onFinished = { [weak self] in self?.trackFinished() }
+        engine.onAdvanced = { [weak self] in self?.advancedGapless() }
         engine.onVisual = { [weak self] bars, wave in self?.visualizer.update(bars: bars, wave: wave) }
 
         timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
@@ -118,6 +150,30 @@ final class PlayerModel {
     }
 
     private func save(_ key: String, _ value: Any) { UserDefaults.standard.set(value, forKey: key) }
+
+    // MARK: Sound
+
+    private func applyVoice() { engine.voiceBoost = voiceBoostOn ? Float(voiceBoost) : 0 }
+
+    private func applyBass() {
+        engine.bassBoost = bassBoostOn ? Float(bassBoost) : 0
+        applyHeadroom()
+    }
+
+    /// Attenuate by the largest boost so the loudest frequency still peaks where it would without EQ.
+    /// The bass shelf stacks on the two lowest EQ bands.
+    private func applyHeadroom() {
+        let bassDB = bassBoostOn ? bassBoost : 0
+        let gains = eqEnabled ? eqGains : [Double](repeating: 0, count: 10)
+        let worst = max(gains.max() ?? 0, max(gains[0], gains[1]) + bassDB, bassDB)
+        headroom = clipGuard ? max(0, worst) : 0
+        engine.setClipGuard(enabled: clipGuard, headroom: Float(headroom))
+    }
+
+    func applyBassPreset(_ db: Double) {
+        bassBoost = db
+        bassBoostOn = db > 0
+    }
 
     private func tick() {
         guard isPlaying else {
@@ -172,8 +228,73 @@ final class PlayerModel {
         engine.play()
         isPlaying = true
         isPaused = false
+        outputSampleRate = engine.outputSampleRate
+        plannedNextID = nil
+        planNext()
         if !track.metadataLoaded { Task { await refreshMetadata(for: [track]) } }
         updateNowPlaying()
+    }
+
+    // MARK: Gapless
+
+    /// The track that should follow the current one automatically, or nil to stop.
+    private func autoNextID() -> Track.ID? {
+        guard let cur = currentID, !tracks.isEmpty else { return nil }
+        if repeatMode == .one { return cur }
+        if shuffle, tracks.count > 1 {
+            if let p = plannedNextID, p != cur, tracks.contains(where: { $0.id == p }) { return p }
+            return tracks.filter { $0.id != cur }.randomElement()?.id
+        }
+        guard let i = currentIndex else { return nil }
+        if i + 1 < tracks.count { return tracks[i + 1].id }
+        return repeatMode == .all ? tracks.first?.id : nil
+    }
+
+    private func planNext() {
+        guard gapless, isPlaying || isPaused, let id = autoNextID(),
+              let t = tracks.first(where: { $0.id == id }) else { return }
+        // A book with a saved position starts mid-file, which can't be gapless.
+        if t.remembersPosition, resumePositions[t.positionKey] != nil, id != currentID { return }
+        planToken += 1
+        let token = planToken
+        Task {
+            var url = t.url
+            #if os(macOS)
+            if !AudioFormats.isNative(t.ext) {
+                guard let decoded = try? await FFmpegDecoder.decode(t.url) else { return }
+                url = decoded
+            }
+            #endif
+            guard token == planToken, currentID != nil else { return }
+            if engine.queueNext(url: url) { plannedNextID = id }
+        }
+    }
+
+    private func dropPlannedNext() {
+        planToken += 1
+        if plannedNextID != nil { engine.dropNext() }
+        plannedNextID = nil
+    }
+
+    /// Re-queue if the playlist, shuffle or repeat changed what should come next.
+    private func replanNext(force: Bool = false) {
+        guard gapless, isPlaying || isPaused else { return }
+        if !force, let p = plannedNextID, p == autoNextID() { return }
+        if force || plannedNextID != nil { dropPlannedNext() }
+        planNext()
+    }
+
+    private func advancedGapless() {
+        guard let old = currentTrack else { return }
+        if old.remembersPosition { setResume(nil, for: old.positionKey) }
+        if let next = plannedNextID, next != old.id { history.append(old.id) }
+        currentID = plannedNextID ?? currentID
+        plannedNextID = nil
+        duration = engine.duration
+        position = 0
+        updateNowPlaying()
+        planNext()
+        if let t = currentTrack, !t.metadataLoaded { Task { await refreshMetadata(for: [t]) } }
     }
 
     private func fail(_ track: Track, _ error: Error) {
@@ -191,6 +312,7 @@ final class PlayerModel {
             engine.play()
             isPlaying = true
             isPaused = false
+            planNext()
             updateNowPlaying()
             return
         }
@@ -218,6 +340,8 @@ final class PlayerModel {
 
     func stop() {
         saveResumePosition()
+        planToken += 1
+        plannedNextID = nil
         engine.stop()
         isPlaying = false
         isPaused = false
@@ -333,6 +457,9 @@ final class PlayerModel {
     func applicationWillTerminate() {
         saveResumePosition()
         savePlaylistNow()
+        #if os(macOS)
+        OutputDevice.restoreOriginal()
+        #endif
     }
 
     // MARK: Playlist editing
@@ -345,7 +472,7 @@ final class PlayerModel {
         }
         let newTracks = files.map(Track.init(url:))
         tracks.append(contentsOf: newTracks)
-        if playFirst, let first = newTracks.first { play(first.id) }
+        if playFirst, let first = newTracks.first { play(first.id) } else { replanNext() }
         Task { await refreshMetadata(for: newTracks) }
     }
 
@@ -359,6 +486,7 @@ final class PlayerModel {
         #endif
         tracks.removeAll { ids.contains($0.id) }
         selection.subtract(ids)
+        replanNext()
     }
 
     func crop(to ids: Set<Track.ID>) { remove(Set(tracks.map(\.id)).subtracting(ids)) }
@@ -374,6 +502,7 @@ final class PlayerModel {
 
     func move(from source: IndexSet, to destination: Int) {
         tracks.move(fromOffsets: source, toOffset: destination)
+        replanNext()
     }
 
     enum SortKey { case title, artist, album, path, duration, random }
@@ -387,6 +516,7 @@ final class PlayerModel {
         case .duration: tracks.sort { $0.duration < $1.duration }
         case .random: tracks.shuffle()
         }
+        replanNext()
     }
 
     private func refreshMetadata(for list: [Track]) async {
