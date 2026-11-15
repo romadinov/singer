@@ -7,7 +7,8 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "Singer",
-            path: "Sources/Singer",
+            path: "Sources",
+            sources: ["Shared", "Mac"],
             swiftSettings: [.swiftLanguageMode(.v5)]
         )
     ]

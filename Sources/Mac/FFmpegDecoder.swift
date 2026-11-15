@@ -22,6 +22,10 @@ enum FFmpegDecoder {
         return dir
     }()
 
+    static func outputExtension(for ext: String) -> String {
+        AudioFormats.losslessExtensions.contains(ext) ? "flac" : "caf"
+    }
+
     static func decode(_ url: URL) async throws -> URL {
         guard let ffmpeg = AudioFormats.ffmpegPath else { throw DecodeError.ffmpegMissing }
         let ext = url.pathExtension.lowercased()

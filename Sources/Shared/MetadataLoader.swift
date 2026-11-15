@@ -11,8 +11,10 @@ enum MetadataLoader {
             readTechnicalInfo(into: &t)
             await readAssetMetadata(into: &t)
             if t.ext == "flac", let tags = FLACTags.read(url) { apply(tags, to: &t) }
-        } else if AudioFormats.ffprobePath != nil {
-            FFprobe.read(into: &t)
+        } else {
+            #if os(macOS)
+            if AudioFormats.ffprobePath != nil { FFprobe.read(into: &t) }
+            #endif
         }
 
         if t.bitrateKbps == 0, t.duration > 0,
@@ -23,7 +25,7 @@ enum MetadataLoader {
         return t
     }
 
-    private static func readTechnicalInfo(into t: inout Track) {
+    static func readTechnicalInfo(into t: inout Track) {
         guard let file = try? AVAudioFile(forReading: t.url) else { return }
         let fmt = file.fileFormat
         let asbd = fmt.streamDescription.pointee
@@ -140,6 +142,7 @@ enum FLACTags {
     }
 }
 
+#if os(macOS)
 /// Metadata for formats Core Audio can't open (APE, WavPack, DSD, Ogg…).
 enum FFprobe {
     static func read(into t: inout Track) {
@@ -183,3 +186,4 @@ enum FFprobe {
         }
     }
 }
+#endif

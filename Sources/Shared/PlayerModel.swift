@@ -1,4 +1,4 @@
-import AppKit
+import Foundation
 import MediaPlayer
 import Observation
 import UniformTypeIdentifiers
@@ -73,6 +73,9 @@ final class PlayerModel {
     @ObservationIgnored private var lastResumeSave = Date.distantPast
     @ObservationIgnored private var resumePositions: [String: Double] =
         UserDefaults.standard.dictionary(forKey: "resumePositions") as? [String: Double] ?? [:]
+    /// When each position last changed (epoch seconds), so Mac ↔ iPhone sync keeps the newest.
+    @ObservationIgnored private var resumeStamps: [String: Double] =
+        UserDefaults.standard.dictionary(forKey: "resumeStamps") as? [String: Double] ?? [:]
 
     var currentTrack: Track? { tracks.first { $0.id == currentID } }
     var currentIndex: Int? { tracks.firstIndex { $0.id == currentID } }
@@ -109,7 +112,9 @@ final class PlayerModel {
 
         setupRemoteCommands()
         restorePlaylist()
+        #if os(macOS)
         FFmpegDecoder.pruneCache()
+        #endif
     }
 
     private func save(_ key: String, _ value: Any) { UserDefaults.standard.set(value, forKey: key) }
@@ -141,6 +146,7 @@ final class PlayerModel {
         defer { if token == loadToken { isLoading = false } }
 
         var url = track.url
+        #if os(macOS)
         if !AudioFormats.isNative(track.ext) {
             message = "Decoding \(track.ext.uppercased())…"
             do { url = try await FFmpegDecoder.decode(track.url) } catch {
@@ -151,6 +157,7 @@ final class PlayerModel {
             guard token == loadToken else { return }
             message = nil
         }
+        #endif
 
         do { try engine.load(url: url) } catch {
             fail(track, error)
@@ -158,7 +165,7 @@ final class PlayerModel {
         }
         duration = engine.duration
         position = 0
-        if resume, track.remembersPosition, let saved = resumePositions[track.url.path], saved < duration - 5 {
+        if resume, track.remembersPosition, let saved = resumePositions[track.positionKey], saved < duration - 5 {
             engine.seek(to: saved)
             position = saved
         }
@@ -247,7 +254,7 @@ final class PlayerModel {
     }
 
     private func trackFinished() {
-        if let t = currentTrack { resumePositions[t.url.path] = nil; persistResumePositions() }
+        if let t = currentTrack, t.remembersPosition { setResume(nil, for: t.positionKey) }
         isPlaying = false
         if repeatMode == .one, let id = currentID {
             Task { await start(id, resume: false) }
@@ -289,12 +296,38 @@ final class PlayerModel {
         lastResumeSave = Date()
         guard let t = currentTrack, t.remembersPosition, duration > 0 else { return }
         let pos = engine.currentTime
-        resumePositions[t.url.path] = pos > 5 && pos < duration - 5 ? pos : nil
-        persistResumePositions()
+        setResume(pos > 5 && pos < duration - 5 ? pos : nil, for: t.positionKey)
     }
 
-    private func persistResumePositions() {
+    private func setResume(_ seconds: Double?, for key: String, stamp: Double = Date().timeIntervalSince1970) {
+        guard resumePositions[key] != seconds || resumeStamps[key] == nil else { return }
+        resumePositions[key] = seconds
+        resumeStamps[key] = stamp
         UserDefaults.standard.set(resumePositions, forKey: "resumePositions")
+        UserDefaults.standard.set(resumeStamps, forKey: "resumeStamps")
+    }
+
+    /// Positions for sync, keyed by `Track.positionKey`. 0 seconds means "finished / start over".
+    func resumeSnapshot() -> [String: SyncPosition] {
+        saveResumePosition()
+        var out: [String: SyncPosition] = [:]
+        for (key, stamp) in resumeStamps {
+            out[key] = SyncPosition(seconds: resumePositions[key] ?? 0, updated: stamp)
+        }
+        return out
+    }
+
+    /// Adopt positions that are newer than ours.
+    func mergeResume(_ incoming: [String: SyncPosition]) {
+        for (key, p) in incoming where p.updated > (resumeStamps[key] ?? 0) {
+            // Don't yank the track that's playing right now.
+            if isPlaying, currentTrack?.positionKey == key { continue }
+            setResume(p.seconds > 0 ? p.seconds : nil, for: key, stamp: p.updated)
+            if let t = currentTrack, t.positionKey == key, !isPlaying {
+                if engine.duration > 0 { engine.seek(to: p.seconds) }
+                position = p.seconds
+            }
+        }
     }
 
     func applicationWillTerminate() {
@@ -317,6 +350,13 @@ final class PlayerModel {
     }
 
     func remove(_ ids: Set<Track.ID>) {
+        if let id = currentID, ids.contains(id) { stop(); currentID = nil; duration = 0 }
+        #if os(iOS)
+        // On iPhone the playlist *is* the library: removing a track deletes its file.
+        for t in tracks where ids.contains(t.id) && Self.isInLibrary(t.url) {
+            try? FileManager.default.removeItem(at: t.url)
+        }
+        #endif
         tracks.removeAll { ids.contains($0.id) }
         selection.subtract(ids)
     }
@@ -386,38 +426,13 @@ final class PlayerModel {
         return out
     }
 
-    // MARK: Panels
-
-    static var openableTypes: [UTType] {
-        (AudioFormats.playable.union(AudioFormats.playlists)).compactMap { UTType(filenameExtension: $0) }
-            + [.audio, .folder]
-    }
-
-    func showOpenPanel(replace: Bool = false) {
-        let panel = NSOpenPanel()
-        panel.allowsMultipleSelection = true
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = true
-        panel.allowedContentTypes = Self.openableTypes
-        panel.message = "Choose audio files or folders"
-        guard panel.runModal() == .OK else { return }
-        if replace { clear() }
-        add(urls: panel.urls, playFirst: replace || !isPlaying)
-    }
-
-    func showSavePanel() {
-        let panel = NSSavePanel()
-        panel.allowedContentTypes = [UTType(filenameExtension: "m3u8") ?? .plainText]
-        panel.nameFieldStringValue = "Playlist.m3u8"
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        do { try Playlist.write(tracks, to: url) } catch { message = error.localizedDescription }
-    }
-
     // MARK: Persistence
 
     private static var stateURL: URL {
-        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Singer", isDirectory: true)
+        // SINGER_STATE_DIR keeps test runs away from the real playlist.
+        let dir = ProcessInfo.processInfo.environment["SINGER_STATE_DIR"].map { URL(fileURLWithPath: $0) }
+            ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent("Singer", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.appendingPathComponent("playlist.json")
     }
@@ -434,7 +449,27 @@ final class PlayerModel {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1, execute: work)
     }
 
-    private func savePlaylistNow() {
+    /// Where the iPhone keeps its music (Documents, visible in Files and Finder). nil on the Mac.
+    static var libraryDirectory: URL? {
+        #if os(iOS)
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        #else
+        nil
+        #endif
+    }
+
+    static func isInLibrary(_ url: URL) -> Bool {
+        guard let lib = libraryDirectory else { return false }
+        return url.standardizedFileURL.path.hasPrefix(lib.standardizedFileURL.path)
+    }
+
+    /// Add synced/imported tracks whose metadata is already known.
+    func addPrepared(_ new: [Track]) {
+        let known = Set(tracks.compactMap(\.syncID))
+        tracks.append(contentsOf: new.filter { $0.syncID == nil || !known.contains($0.syncID!) })
+    }
+
+    func savePlaylistNow() {
         let state = SavedState(tracks: tracks, currentPath: currentTrack?.url.path)
         if let data = try? JSONEncoder().encode(state) { try? data.write(to: Self.stateURL, options: .atomic) }
     }
@@ -442,11 +477,21 @@ final class PlayerModel {
     private func restorePlaylist() {
         guard let data = try? Data(contentsOf: Self.stateURL),
               let state = try? JSONDecoder().decode(SavedState.self, from: data) else { return }
-        tracks = state.tracks.filter { FileManager.default.fileExists(atPath: $0.url.path) }
-        if let path = state.currentPath { currentID = tracks.first { $0.url.path == path }?.id }
+        tracks = state.tracks.compactMap { t in
+            if FileManager.default.fileExists(atPath: t.url.path) { return t }
+            // iOS moves the app container on updates; find the file again by name in the library.
+            guard let lib = Self.libraryDirectory else { return nil }
+            var moved = t
+            moved.url = lib.appendingPathComponent(t.url.lastPathComponent)
+            return FileManager.default.fileExists(atPath: moved.url.path) ? moved : nil
+        }
+        if let path = state.currentPath {
+            let name = URL(fileURLWithPath: path).lastPathComponent
+            currentID = (tracks.first { $0.url.path == path } ?? tracks.first { $0.url.lastPathComponent == name })?.id
+        }
         if let t = currentTrack {
             duration = t.duration
-            if t.remembersPosition { position = resumePositions[t.url.path] ?? 0 }
+            if t.remembersPosition { position = resumePositions[t.positionKey] ?? 0 }
         }
     }
 

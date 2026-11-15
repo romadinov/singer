@@ -1,8 +1,11 @@
-// Renders the app icon PNGs: swift scripts/make-icon.swift <out.iconset>
+// Renders the app icon PNGs:
+//   swift scripts/make-icon.swift <out.iconset>        macOS iconset (rounded, with margin)
+//   swift scripts/make-icon.swift --ios <out.png>      1024px full-bleed iOS icon
 import AppKit
 
-let out = CommandLine.arguments[1]
-try? FileManager.default.createDirectory(atPath: out, withIntermediateDirectories: true)
+let iOS = CommandLine.arguments[1] == "--ios"
+let out = CommandLine.arguments[iOS ? 2 : 1]
+if !iOS { try? FileManager.default.createDirectory(atPath: out, withIntermediateDirectories: true) }
 
 func render(_ px: Int) -> Data {
     let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: px, pixelsHigh: px, bitsPerSample: 8,
@@ -11,9 +14,9 @@ func render(_ px: Int) -> Data {
     NSGraphicsContext.saveGraphicsState()
     NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
     let s = CGFloat(px)
-    let inset = s * 0.1
+    let inset = iOS ? 0 : s * 0.1
     let rect = NSRect(x: inset, y: inset, width: s - 2 * inset, height: s - 2 * inset)
-    let body = NSBezierPath(roundedRect: rect, xRadius: s * 0.18, yRadius: s * 0.18)
+    let body = iOS ? NSBezierPath(rect: rect) : NSBezierPath(roundedRect: rect, xRadius: s * 0.18, yRadius: s * 0.18)
     NSGradient(colors: [NSColor(red: 0.26, green: 0.26, blue: 0.36, alpha: 1),
                         NSColor(red: 0.10, green: 0.10, blue: 0.14, alpha: 1)])!.draw(in: body, angle: -90)
     let lcd = rect.insetBy(dx: s * 0.09, dy: s * 0.13)
@@ -32,6 +35,10 @@ func render(_ px: Int) -> Data {
     return rep.representation(using: .png, properties: [:])!
 }
 
+if iOS {
+    try! render(1024).write(to: URL(fileURLWithPath: out))
+    exit(0)
+}
 for size in [16, 32, 128, 256, 512] {
     try! render(size).write(to: URL(fileURLWithPath: "\(out)/icon_\(size)x\(size).png"))
     try! render(size * 2).write(to: URL(fileURLWithPath: "\(out)/icon_\(size)x\(size)@2x.png"))

@@ -31,6 +31,18 @@ Files that need ffmpeg get decoded once into `~/Library/Caches/Singer/decoded`: 
 | B | Next | S / R | Shuffle / repeat |
 | ⌘O | Add files | ⌥G / ⌥E | Toggle EQ / playlist |
 
+## iPhone
+
+Singer for iPhone (`iOS/`, which shares `Sources/Shared` with the Mac) has the same engine, EQ, visualizer, chapters and speed control. It plays in the background and pauses for calls.
+
+**Sync from the Mac over Wi-Fi.** On the Mac, open File → iPhone Sync… (⇧⌘Y) and turn sharing on. On the iPhone, open the SYNC tab, pick the Mac and enter the PIN.
+The iPhone sees the Mac's playlist and can download single tracks or GET ALL. The Mac converts formats iOS can't play (APE, DSD, Ogg…) to FLAC/PCM on the way. Audiobook positions sync both ways, and the newest one wins.
+You can also add music with + IMPORT (from Files), or by dragging files onto Singer in Finder → iPhone → Files.
+
+```bash
+scripts/install-iphone.sh   # Release build, installs on the connected iPhone (XcodeGen + automatic signing)
+```
+
 ## Build
 
 ```bash

@@ -27,6 +27,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        MainActor.assumeIsolated { _ = SyncServer.shared }  // starts listening if sync was enabled
         // Files passed on the command line: `Singer song.flac folder/`
         let paths = CommandLine.arguments.dropFirst().filter { !$0.hasPrefix("-") }
         if !paths.isEmpty {
@@ -57,6 +58,11 @@ struct SingerApp: App {
         .windowBackgroundDragBehavior(.enabled)
         .defaultSize(width: 480, height: 640)
         .commands { PlayerCommands(model: model) }
+
+        Window("iPhone Sync", id: "sync") {
+            SyncWindow()
+        }
+        .windowResizability(.contentSize)
     }
 }
 
@@ -102,6 +108,7 @@ struct ContentView: View {
 
 struct PlayerCommands: Commands {
     let model: PlayerModel
+    @Environment(\.openWindow) private var openWindow
 
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
@@ -111,6 +118,9 @@ struct PlayerCommands: Commands {
                 .keyboardShortcut("o", modifiers: [.command, .shift])
             Button("Save Playlist…") { model.showSavePanel() }
                 .keyboardShortcut("s")
+            Divider()
+            Button("iPhone Sync…") { openWindow(id: "sync") }
+                .keyboardShortcut("y", modifiers: [.command, .shift])
         }
         CommandMenu("Playback") {
             Button("Previous") { model.previous() }.keyboardShortcut("z", modifiers: [])

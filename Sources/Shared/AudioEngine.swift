@@ -72,6 +72,9 @@ final class AudioEngine {
 
     func play() {
         guard file != nil else { return }
+        #if os(iOS)
+        try? AVAudioSession.sharedInstance().setActive(true)
+        #endif
         if !engine.isRunning {
             engine.prepare()
             do { try engine.start() } catch { NSLog("Singer: engine start failed: \(error)"); return }

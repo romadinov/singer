@@ -10,7 +10,9 @@ struct Chapter: Identifiable, Hashable, Codable, Sendable {
 
 struct Track: Identifiable, Codable, Sendable {
     var id = UUID()
-    let url: URL
+    var url: URL
+    /// Stable identity shared between Mac and iPhone (nil on the Mac; derived from the path there).
+    var syncID: String?
     var title: String
     var artist: String?
     var album: String?
@@ -30,6 +32,8 @@ struct Track: Identifiable, Codable, Sendable {
     }
 
     var ext: String { url.pathExtension.lowercased() }
+    /// Key for remembered playback positions.
+    var positionKey: String { syncID ?? url.path }
     var displayTitle: String {
         if let artist, !artist.isEmpty { return "\(artist) - \(title)" }
         return title

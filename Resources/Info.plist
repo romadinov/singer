@@ -13,6 +13,8 @@
     <key>LSMinimumSystemVersion</key><string>15.0</string>
     <key>LSApplicationCategoryType</key><string>public.app-category.music</string>
     <key>NSHighResolutionCapable</key><true/>
+    <key>NSLocalNetworkUsageDescription</key><string>Singer shares your playlist with Singer on iPhone over Wi-Fi.</string>
+    <key>NSBonjourServices</key><array><string>_singer._tcp</string></array>
     <key>CFBundleDocumentTypes</key>
     <array>
         <dict>
