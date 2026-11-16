@@ -83,7 +83,7 @@ enum SoundProbe {
         let engine = AudioEngine()
         engine.volume = 0
         engine.bassBoost = 9
-        engine.setClipGuard(enabled: true, headroom: 9)
+        engine.clipGuard = true
         engine.voiceBoost = 6
         let start = Date()
         var advancedAt: Double?, finishedAt: Double?

@@ -280,11 +280,11 @@ final class AudioEngine {
         }
     }
 
-    /// Clipping protection: `headroom` dB of attenuation in front of a peak limiter.
-    func setClipGuard(enabled: Bool, headroom: Float) {
-        limiter.bypass = !enabled
-        // AUPeakLimiter parameter 2 is pre-gain (dB).
-        AudioUnitSetParameter(limiter.audioUnit, 2, kAudioUnitScope_Global, 0, enabled ? -headroom : 0, 0)
+    /// Clipping protection. AUPeakLimiter is bit-transparent below 0 dBFS and only pulls down peaks
+    /// that would clip, so boosts keep their level (no static attenuation, which sounded dull).
+    var clipGuard: Bool {
+        get { !limiter.bypass }
+        set { limiter.bypass = !newValue }
     }
 
     // MARK: Graph

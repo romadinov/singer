@@ -52,13 +52,12 @@ final class PlayerModel {
     var rate: Double = 1 { didSet { engine.rate = Float(rate); save("rate", rate); updateNowPlaying() } }
     var shuffle = false { didSet { save("shuffle", shuffle); if shuffle != oldValue { replanNext(force: true) } } }
     var repeatMode: RepeatMode = .all { didSet { save("repeat", repeatMode.rawValue); replanNext() } }
-    var eqEnabled = true { didSet { engine.eqEnabled = eqEnabled; save("eqEnabled", eqEnabled); applyHeadroom() } }
+    var eqEnabled = true { didSet { engine.eqEnabled = eqEnabled; save("eqEnabled", eqEnabled) } }
     var preamp: Double = 0 { didSet { engine.preamp = Float(preamp); save("preamp", preamp) } }
     var eqGains = [Double](repeating: 0, count: 10) {
         didSet {
             for (i, g) in eqGains.enumerated() { engine.setGain(Float(g), band: i) }
             save("eqGains", eqGains)
-            applyHeadroom()
         }
     }
 
@@ -67,8 +66,8 @@ final class PlayerModel {
     var gapless = true { didSet { save("gapless", gapless); gapless ? planNext() : dropPlannedNext() } }
     /// Switch the output device to the file's sample rate so lossless isn't resampled.
     var matchSampleRate = true { didSet { save("matchSampleRate", matchSampleRate); engine.matchOutputRate = matchSampleRate } }
-    /// Automatic headroom for EQ/bass boosts plus a peak limiter, so boosts never clip.
-    var clipGuard = true { didSet { save("clipGuard", clipGuard); applyHeadroom() } }
+    /// Peak limiter after the boosts: transparent below 0 dBFS, catches only the peaks that would clip.
+    var clipGuard = true { didSet { save("clipGuard", clipGuard); engine.clipGuard = clipGuard } }
     var bassBoostOn = false { didSet { save("bassBoostOn", bassBoostOn); applyBass() } }
     /// Bass boost amount in dB (low shelf at 100 Hz).
     var bassBoost: Double = 6 { didSet { save("bassBoost", bassBoost); applyBass() } }
@@ -76,8 +75,6 @@ final class PlayerModel {
     var voiceBoostOn = false { didSet { save("voiceBoostOn", voiceBoostOn); applyVoice() } }
     var voiceBoost: Double = 5 { didSet { save("voiceBoost", voiceBoost); applyVoice() } }
     private(set) var outputSampleRate: Double = 0
-    /// dB of attenuation the clip guard currently applies.
-    private(set) var headroom: Double = 0
     var showEqualizer = true { didSet { save("showEQ", showEqualizer) } }
     var showPlaylist = true { didSet { save("showPL", showPlaylist) } }
 
@@ -130,6 +127,7 @@ final class PlayerModel {
         engine.preamp = Float(preamp)
         for (i, g) in eqGains.enumerated() { engine.setGain(Float(g), band: i) }
         engine.matchOutputRate = matchSampleRate
+        engine.clipGuard = clipGuard
         applyBass()
         applyVoice()
 
@@ -155,20 +153,7 @@ final class PlayerModel {
 
     private func applyVoice() { engine.voiceBoost = voiceBoostOn ? Float(voiceBoost) : 0 }
 
-    private func applyBass() {
-        engine.bassBoost = bassBoostOn ? Float(bassBoost) : 0
-        applyHeadroom()
-    }
-
-    /// Attenuate by the largest boost so the loudest frequency still peaks where it would without EQ.
-    /// The bass shelf stacks on the two lowest EQ bands.
-    private func applyHeadroom() {
-        let bassDB = bassBoostOn ? bassBoost : 0
-        let gains = eqEnabled ? eqGains : [Double](repeating: 0, count: 10)
-        let worst = max(gains.max() ?? 0, max(gains[0], gains[1]) + bassDB, bassDB)
-        headroom = clipGuard ? max(0, worst) : 0
-        engine.setClipGuard(enabled: clipGuard, headroom: Float(headroom))
-    }
+    private func applyBass() { engine.bassBoost = bassBoostOn ? Float(bassBoost) : 0 }
 
     func applyBassPreset(_ db: Double) {
         bassBoost = db

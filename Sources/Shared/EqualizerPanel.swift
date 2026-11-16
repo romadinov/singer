@@ -134,7 +134,7 @@ struct SoundRow: View {
             Spacer(minLength: 4)
             RetroButton(text: "SAFE", active: model.clipGuard,
                         help: model.clipGuard
-                            ? String(format: "Clip guard on: %.1f dB headroom + peak limiter", model.headroom)
+                            ? "Clip guard on: a peak limiter catches only peaks that would clip"
                             : "Clip guard off: EQ and bass boosts can distort") {
                 model.clipGuard.toggle()
             }

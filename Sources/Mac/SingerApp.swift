@@ -155,7 +155,7 @@ struct PlayerCommands: Commands {
         CommandMenu("Sound") {
             Toggle("Gapless Playback", isOn: Binding(get: { model.gapless }, set: { model.gapless = $0 }))
             Toggle("Match Output Sample Rate", isOn: Binding(get: { model.matchSampleRate }, set: { model.matchSampleRate = $0 }))
-            Toggle("Clip Guard (Headroom + Limiter)", isOn: Binding(get: { model.clipGuard }, set: { model.clipGuard = $0 }))
+            Toggle("Clip Guard (Peak Limiter)", isOn: Binding(get: { model.clipGuard }, set: { model.clipGuard = $0 }))
             Divider()
             Toggle("Bass Boost", isOn: Binding(get: { model.bassBoostOn }, set: { model.bassBoostOn = $0 }))
                 .keyboardShortcut("b", modifiers: [.command, .option])
